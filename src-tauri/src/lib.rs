@@ -17,6 +17,7 @@ pub fn run() {
             commands::disconnect,
             commands::send_command,
             commands::is_connected,
+            commands::send_pixel_frame,
             audio::list_audio_devices,
             audio::start_audio_stream,
             audio::stop_audio_stream,

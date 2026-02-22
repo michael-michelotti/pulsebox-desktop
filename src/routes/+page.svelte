@@ -1,5 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
+  import { onMount } from "svelte";
 
   interface Device {
     name: string;
@@ -13,6 +15,44 @@
     ip: string | null;
     port: number | null;
   }
+
+  interface DeviceStatus {
+    protocol_ver: number;
+    wifi_mode: string;
+    brightness: number;
+    color_r: number;
+    color_g: number;
+    color_b: number;
+    speed: number;
+    direction: number;
+    grid_width: number;
+    grid_height: number;
+    num_pixels: number;
+    effect: string;
+    palette: string;
+  }
+
+  function applyStatus(status: DeviceStatus) {
+    currentEffect = status.effect;
+    brightness = status.brightness;
+    speed = status.speed;
+    direction = Math.round(status.direction);
+    colorR = status.color_r;
+    colorG = status.color_g;
+    colorB = status.color_b;
+    currentPalette = status.palette;
+  }
+
+  onMount(() => {
+    listen<DeviceStatus>("device-status", (event) => {
+      applyStatus(event.payload);
+    });
+    listen("device-disconnected", () => {
+      connected = false;
+      connectedIp = "";
+      statusMsg = "Device disconnected";
+    });
+  });
 
   let devices = $state<Device[]>([]);
   let scanning = $state(false);
@@ -51,7 +91,7 @@
 
   const effects = [
     "rainbow", "bass", "twinkle", "solid", "splash",
-    "fire", "breathe", "wipe", "spectrum"
+    "fire", "breathe", "wipe", "spectrum", "image"
   ];
 
   const palettes = ["rainbow", "fire"];
@@ -70,12 +110,11 @@
 
   async function connectDevice(device: Device) {
     try {
-      await invoke("connect", { ip: device.ip, port: device.cmd_port });
+      const status: DeviceStatus = await invoke("connect", { ip: device.ip, port: device.cmd_port });
       connected = true;
       connectedIp = device.ip;
+      applyStatus(status);
       statusMsg = `Connected to ${device.name} (${device.ip})`;
-      // Fetch current status
-      await sendCmd("status");
     } catch (e) {
       statusMsg = `Connect failed: ${e}`;
     }
@@ -133,9 +172,10 @@
   // Manual / AP mode connection
   async function connectManual() {
     try {
-      await invoke("connect", { ip: manualIp, port: manualPort });
+      const status: DeviceStatus = await invoke("connect", { ip: manualIp, port: manualPort });
       connected = true;
       connectedIp = manualIp;
+      applyStatus(status);
       statusMsg = `Connected to ${manualIp}`;
     } catch (e) {
       statusMsg = `Connect failed: ${e}`;
@@ -219,7 +259,7 @@
         </button>
         {#if showManualConnect}
           <div class="manual-form">
-            <p class="hint">For first-time setup: connect your PC to the "PulseBox-Setup" WiFi network, then connect to 192.168.4.1</p>
+            <p class="hint">For first-time setup: connect your PC to the "PulseBox-Setup" WiFi network (password: pulsebox123), then connect to 192.168.4.1</p>
             <div class="input-row">
               <input type="text" bind:value={manualIp} placeholder="IP address" />
               <input type="number" bind:value={manualPort} style="width: 70px" />
