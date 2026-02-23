@@ -12,9 +12,9 @@
   "app": {
     "windows": [
       {
-        "title": "pulsebox-desktop",
-        "width": 800,
-        "height": 600
+        "title": "PulseBox",
+        "width": 1920,
+        "height": 1024
       }
     ],
     "security": {

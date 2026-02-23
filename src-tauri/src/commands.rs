@@ -29,7 +29,7 @@ struct ConnectionHandle {
     port: u16,
     writer: OwnedWriteHalf,
     /// Send a oneshot sender here; the reader task will forward the next CMD_RESP through it
-    resp_tx: mpsc::Sender<oneshot::Sender<String>>,
+    resp_tx: mpsc::Sender<oneshot::Sender<(bool, String)>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -194,7 +194,7 @@ fn parse_status(payload: &[u8]) -> Result<DeviceStatus, String> {
 /// - On disconnect → emits "device-disconnected" event and exits
 async fn reader_task(
     mut reader: OwnedReadHalf,
-    mut resp_rx: mpsc::Receiver<oneshot::Sender<String>>,
+    mut resp_rx: mpsc::Receiver<oneshot::Sender<(bool, String)>>,
     app_handle: tauri::AppHandle,
 ) {
     loop {
@@ -206,10 +206,15 @@ async fn reader_task(
                     }
                 }
                 MSG_CMD_RESP => {
-                    let text = String::from_utf8_lossy(&payload).to_string();
+                    let success = payload.first().copied().unwrap_or(0) != 0;
+                    let text = if payload.len() > 1 {
+                        String::from_utf8_lossy(&payload[1..]).to_string()
+                    } else {
+                        String::new()
+                    };
                     // Try to deliver to a waiting send_command caller
                     if let Ok(reply_tx) = resp_rx.try_recv() {
-                        let _ = reply_tx.send(text);
+                        let _ = reply_tx.send((success, text));
                     }
                 }
                 _ => {
@@ -266,7 +271,7 @@ pub async fn connect(
 
     // Split the stream and spawn the background reader
     let (reader, writer) = stream.into_split();
-    let (resp_tx, resp_rx) = mpsc::channel::<oneshot::Sender<String>>(16);
+    let (resp_tx, resp_rx) = mpsc::channel::<oneshot::Sender<(bool, String)>>(16);
 
     tokio::spawn(reader_task(reader, resp_rx, app_handle));
 
@@ -294,7 +299,7 @@ pub async fn disconnect(state: State<'_, ConnectionState>) -> Result<(), String>
 pub async fn send_command(
     cmd: String,
     state: State<'_, ConnectionState>,
-) -> Result<String, String> {
+) -> Result<(bool, String), String> {
     // Take the handle out briefly to do async I/O
     let mut handle = {
         let mut guard = state.inner.lock().map_err(|e| e.to_string())?;
@@ -302,9 +307,9 @@ pub async fn send_command(
     };
 
     // Set up a oneshot channel for the CMD_RESP
-    let (reply_tx, reply_rx) = oneshot::channel::<String>();
+    let (reply_tx, reply_rx) = oneshot::channel::<(bool, String)>();
 
-    let result: Result<String, String> = async {
+    let result: Result<(bool, String), String> = async {
         // Register our reply channel with the reader task
         handle
             .resp_tx
