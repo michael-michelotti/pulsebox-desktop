@@ -25,6 +25,9 @@ serde_json = "1"
 mdns-sd = { version = "0.12", features = ["async"] }
 tokio = { version = "1", features = ["net", "io-util", "sync", "time"] }
 cpal = "0.15"
+image = "0.25"
+base64 = "0.22"
+tauri-plugin-dialog = "2"
 
 [profile.release]
 lto = false

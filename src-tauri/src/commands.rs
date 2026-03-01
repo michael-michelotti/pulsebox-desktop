@@ -1,3 +1,5 @@
+use base64::Engine;
+use image::{AnimationDecoder, GenericImageView, imageops::FilterType};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{Emitter, State};
@@ -13,6 +15,7 @@ const MSG_CMD: u8 = 0x02;
 const MSG_PIXEL_FRAME: u8 = 0x03;
 const MSG_STATUS: u8 = 0x81;
 const MSG_CMD_RESP: u8 = 0x82;
+const MSG_PREVIEW_FRAME: u8 = 0x83;
 
 const PROTOCOL_VERSION: u8 = 1;
 const STATUS_FIXED_SIZE: usize = 18;
@@ -54,6 +57,26 @@ pub struct DeviceStatus {
     pub num_pixels: u16,
     pub effect: String,
     pub palette: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProcessedImage {
+    /// Raw RGB pixel data, row-major, grid_w * grid_h * 3 bytes
+    pub pixels: Vec<u8>,
+    /// Base64-encoded PNG of the processed image (upscaled for preview)
+    pub preview_png_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GifFrame {
+    pub pixels: Vec<u8>,
+    pub delay_ms: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProcessedGif {
+    pub frames: Vec<GifFrame>,
+    pub preview_png_base64: String,
 }
 
 impl ConnectionState {
@@ -217,6 +240,9 @@ async fn reader_task(
                         let _ = reply_tx.send((success, text));
                     }
                 }
+                MSG_PREVIEW_FRAME => {
+                    let _ = app_handle.emit("preview-frame", &payload);
+                }
                 _ => {
                     // Ignore unknown message types
                 }
@@ -378,4 +404,116 @@ pub async fn is_connected(state: State<'_, ConnectionState>) -> Result<Connectio
             port: None,
         }),
     }
+}
+
+#[tauri::command]
+pub fn process_image(
+    path: String,
+    grid_width: u8,
+    grid_height: u8,
+) -> Result<ProcessedImage, String> {
+    let img = image::open(&path).map_err(|e| format!("Failed to open image: {}", e))?;
+
+    // Center-crop to square
+    let (w, h) = img.dimensions();
+    let side = w.min(h);
+    let x_offset = (w - side) / 2;
+    let y_offset = (h - side) / 2;
+    let cropped = img.crop_imm(x_offset, y_offset, side, side);
+
+    // Resize to grid dimensions (high-quality downscale)
+    let gw = grid_width as u32;
+    let gh = grid_height as u32;
+    let resized = cropped.resize_exact(gw, gh, FilterType::Lanczos3);
+
+    // Flip vertically: image row 0 is top, but LED grid row 0 is bottom
+    let flipped = resized.flipv();
+
+    // Extract raw RGB pixels for send_pixel_frame
+    let rgb_image = flipped.to_rgb8();
+    let pixels: Vec<u8> = rgb_image.as_raw().clone();
+
+    // Generate preview from the non-flipped image (screen coordinates match visual)
+    let preview = resized.resize_exact(128, 128, FilterType::Nearest);
+    let mut png_buf: Vec<u8> = Vec::new();
+    preview
+        .write_to(
+            &mut std::io::Cursor::new(&mut png_buf),
+            image::ImageFormat::Png,
+        )
+        .map_err(|e| format!("Failed to encode preview: {}", e))?;
+    let preview_png_base64 = base64::engine::general_purpose::STANDARD.encode(&png_buf);
+
+    Ok(ProcessedImage {
+        pixels,
+        preview_png_base64,
+    })
+}
+
+#[tauri::command]
+pub fn process_gif(
+    path: String,
+    grid_width: u8,
+    grid_height: u8,
+) -> Result<ProcessedGif, String> {
+    let file = std::fs::File::open(&path).map_err(|e| format!("Failed to open file: {}", e))?;
+    let reader = std::io::BufReader::new(file);
+    let decoder = image::codecs::gif::GifDecoder::new(reader)
+        .map_err(|e| format!("Failed to decode GIF: {}", e))?;
+    let raw_frames = decoder.into_frames().collect_frames()
+        .map_err(|e| format!("Failed to read GIF frames: {}", e))?;
+
+    let gw = grid_width as u32;
+    let gh = grid_height as u32;
+    let mut frames = Vec::new();
+    let mut preview_png_base64 = String::new();
+
+    for (i, frame) in raw_frames.into_iter().enumerate() {
+        // Extract delay (numerator/denominator ratio in milliseconds)
+        let (numer, denom) = frame.delay().numer_denom_ms();
+        let delay_ms = if denom == 0 { 100 } else { numer / denom };
+        // GIF spec: delay of 0 is often treated as 100ms
+        let delay_ms = if delay_ms == 0 { 100 } else { delay_ms };
+
+        let img = image::DynamicImage::from(frame.into_buffer());
+
+        // Center-crop to square
+        let (w, h) = img.dimensions();
+        let side = w.min(h);
+        let x_offset = (w - side) / 2;
+        let y_offset = (h - side) / 2;
+        let cropped = img.crop_imm(x_offset, y_offset, side, side);
+
+        // Resize to grid dimensions
+        let resized = cropped.resize_exact(gw, gh, FilterType::Lanczos3);
+
+        // Generate preview from first frame (non-flipped, screen coordinates)
+        if i == 0 {
+            let preview = resized.resize_exact(128, 128, FilterType::Nearest);
+            let mut png_buf: Vec<u8> = Vec::new();
+            preview
+                .write_to(
+                    &mut std::io::Cursor::new(&mut png_buf),
+                    image::ImageFormat::Png,
+                )
+                .map_err(|e| format!("Failed to encode preview: {}", e))?;
+            preview_png_base64 = base64::engine::general_purpose::STANDARD.encode(&png_buf);
+        }
+
+        // Flip vertically for LED grid (row 0 = bottom)
+        let flipped = resized.flipv();
+        let rgb_image = flipped.to_rgb8();
+        let pixels: Vec<u8> = rgb_image.as_raw().clone();
+
+        frames.push(GifFrame { pixels, delay_ms });
+    }
+
+    if frames.is_empty() {
+        return Err("GIF contains no frames".into());
+    }
+
+    Ok(ProcessedGif {
+        frames,
+        preview_png_base64,
+    })
 }

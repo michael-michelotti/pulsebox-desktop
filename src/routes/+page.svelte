@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import { open } from "@tauri-apps/plugin-dialog";
   import { onMount } from "svelte";
 
   interface Device {
@@ -41,6 +42,8 @@
     colorR = status.color_r;
     colorG = status.color_g;
     colorB = status.color_b;
+    gridWidth = status.grid_width;
+    gridHeight = status.grid_height;
     syncPickerFromRgb();
     commandedEffect = null;
     commandedPalette = null;
@@ -55,7 +58,13 @@
       connected = false;
       connectedDevice = null;
       connectedIp = "";
+      previewPixels = [];
       statusMsg = "Device disconnected";
+      stopGif();
+    });
+    listen<number[]>("preview-frame", (event) => {
+      previewPixels = event.payload;
+      drawPreview(event.payload);
     });
     // Eagerly load audio output devices
     loadAudioDevices();
@@ -182,6 +191,27 @@
   let audioStreaming = $state(false);
   let audioStatusMsg = $state("");
 
+  // Grid dimensions (from DeviceStatus)
+  let gridWidth = $state(8);
+  let gridHeight = $state(8);
+
+  // Live preview state
+  let previewPixels = $state<number[]>([]);
+  let previewCanvasEl: HTMLCanvasElement | undefined = $state();
+
+  // Image select state
+  let imageFilePath = $state("");
+  let imagePreviewSrc = $state("");
+  let imagePixels = $state<number[]>([]);
+  let imageStatusMsg = $state("");
+  let imageProcessing = $state(false);
+
+  // GIF playback state
+  let gifFrames = $state<{ pixels: number[]; delay_ms: number }[]>([]);
+  let gifPlaying = $state(false);
+  let gifTimerId = $state<ReturnType<typeof setTimeout> | null>(null);
+  let gifFrameIndex = $state(0);
+
   // WiFi setup state
   let wifiSsid = $state("");
   let wifiPassword = $state("");
@@ -195,10 +225,13 @@
     { label: "Audio Reactive", effects: ["bass", "splash", "spectrum"] },
     { label: "Single Color",   effects: ["solid", "twinkle", "breathe", "wipe"] },
     { label: "Multi Color",    effects: ["rainbow", "fire"] },
-    { label: "Image",          effects: ["image"] },
+    { label: "Image",          effects: ["image", "gif"] },
   ];
 
   const effects = effectCategories.flatMap(c => c.effects);
+  const audioReactiveEffects = new Set(
+    effectCategories.find(c => c.label === "Audio Reactive")!.effects
+  );
 
   // Palette definitions — 16 color stops matching firmware (led_math.c)
   const paletteData: Record<string, [number, number, number][]> = {
@@ -242,6 +275,7 @@
     wipe:      { palette: false, color: true,  colorSet: false, imageSelect: false, params: ['brightness', 'speed'] },
     spectrum:  { palette: true,  color: false, colorSet: false, imageSelect: false, params: ['brightness', 'speed', 'audioStream'] },
     image:     { palette: false, color: false, colorSet: false, imageSelect: true,  params: ['brightness'] },
+    gif:       { palette: false, color: false, colorSet: false, imageSelect: true,  params: ['brightness'] },
   };
 
   let activeConfig = $derived(effectConfig[currentEffect] ?? effectConfig.rainbow);
@@ -286,6 +320,7 @@
     connected = false;
     connectedIp = "";
     connectedDevice = null;
+    previewPixels = [];
     statusMsg = "Disconnected";
   }
 
@@ -398,6 +433,161 @@
       audioStatusMsg = `Stop failed: ${e}`;
     }
   }
+
+  // Auto-manage audio streaming and GIF playback when switching effects
+  let prevEffect: string | null = null;
+  $effect(() => {
+    const wasAudio = prevEffect !== null && audioReactiveEffects.has(prevEffect);
+    const isAudio = audioReactiveEffects.has(currentEffect);
+
+    // Stop GIF playback when leaving gif effect
+    if (prevEffect === "gif" && currentEffect !== "gif") {
+      stopGif();
+    }
+
+    // Clear stale state when switching between image and gif modes
+    if ((prevEffect === "gif" && currentEffect === "image") ||
+        (prevEffect === "image" && currentEffect === "gif")) {
+      imageFilePath = "";
+      imagePreviewSrc = "";
+      imagePixels = [];
+      gifFrames = [];
+      imageStatusMsg = "";
+    }
+
+    prevEffect = currentEffect;
+
+    if (wasAudio && !isAudio && audioStreaming) {
+      stopAudio();
+    } else if (!wasAudio && isAudio && connected) {
+      loadAudioDevices();
+    }
+  });
+
+  // Image / GIF select functions
+  const isGifMode = $derived(currentEffect === "gif");
+
+  async function chooseImageFile() {
+    const filters = isGifMode
+      ? [{ name: "GIF", extensions: ["gif"] }]
+      : [{ name: "Images", extensions: ["png", "jpg", "jpeg", "bmp", "webp", "tiff", "tif"] }];
+
+    const selected = await open({ multiple: false, filters });
+    if (selected) {
+      imageFilePath = selected;
+      if (isGifMode) {
+        await processGif(selected);
+      } else {
+        await processImage(selected);
+      }
+    }
+  }
+
+  async function processImage(path: string) {
+    imageProcessing = true;
+    imageStatusMsg = "Processing...";
+    gifFrames = [];
+    stopGif();
+    try {
+      const result: { pixels: number[]; preview_png_base64: string } = await invoke(
+        "process_image",
+        { path, gridWidth, gridHeight }
+      );
+      imagePixels = result.pixels;
+      imagePreviewSrc = `data:image/png;base64,${result.preview_png_base64}`;
+      imageStatusMsg = `Ready (${gridWidth}x${gridHeight})`;
+    } catch (e) {
+      imageStatusMsg = `Error: ${e}`;
+      imagePreviewSrc = "";
+      imagePixels = [];
+    }
+    imageProcessing = false;
+  }
+
+  async function processGif(path: string) {
+    imageProcessing = true;
+    imageStatusMsg = "Processing GIF...";
+    imagePixels = [];
+    stopGif();
+    try {
+      const result: { frames: { pixels: number[]; delay_ms: number }[]; preview_png_base64: string } =
+        await invoke("process_gif", { path, gridWidth, gridHeight });
+      gifFrames = result.frames;
+      imagePreviewSrc = `data:image/png;base64,${result.preview_png_base64}`;
+      imageStatusMsg = `${gifFrames.length} frames (${gridWidth}x${gridHeight})`;
+      startGif();
+    } catch (e) {
+      imageStatusMsg = `Error: ${e}`;
+      imagePreviewSrc = "";
+      gifFrames = [];
+    }
+    imageProcessing = false;
+  }
+
+  function startGif() {
+    if (gifFrames.length === 0) return;
+    gifPlaying = true;
+    gifFrameIndex = 0;
+    sendGifFrame();
+  }
+
+  function sendGifFrame() {
+    if (!gifPlaying || gifFrames.length === 0) return;
+    const frame = gifFrames[gifFrameIndex];
+    invoke("send_pixel_frame", { pixels: frame.pixels }).catch(() => {});
+    gifFrameIndex = (gifFrameIndex + 1) % gifFrames.length;
+    gifTimerId = setTimeout(sendGifFrame, frame.delay_ms);
+  }
+
+  function stopGif() {
+    gifPlaying = false;
+    if (gifTimerId !== null) {
+      clearTimeout(gifTimerId);
+      gifTimerId = null;
+    }
+  }
+
+  function drawPreview(pixels: number[]) {
+    if (!previewCanvasEl) return;
+    const ctx = previewCanvasEl.getContext("2d");
+    if (!ctx) return;
+
+    const w = gridWidth;
+    const h = gridHeight;
+    if (pixels.length !== w * h * 3) return;
+
+    // Create ImageData from RGB (expand to RGBA), flipping Y so y=0 is at the bottom
+    const imgData = new ImageData(w, h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const srcIdx = (y * w + x) * 3;
+        const dstIdx = ((h - 1 - y) * w + x) * 4;
+        imgData.data[dstIdx + 0] = pixels[srcIdx + 0];
+        imgData.data[dstIdx + 1] = pixels[srcIdx + 1];
+        imgData.data[dstIdx + 2] = pixels[srcIdx + 2];
+        imgData.data[dstIdx + 3] = 255;
+      }
+    }
+
+    // Draw at native size to an offscreen canvas, then upscale with nearest-neighbor
+    const offscreen = new OffscreenCanvas(w, h);
+    const offCtx = offscreen.getContext("2d")!;
+    offCtx.putImageData(imgData, 0, 0);
+
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, 128, 128);
+    ctx.drawImage(offscreen, 0, 0, 128, 128);
+  }
+
+  async function uploadImage() {
+    if (imagePixels.length === 0) return;
+    try {
+      await invoke("send_pixel_frame", { pixels: imagePixels });
+      imageStatusMsg = "Uploaded!";
+    } catch (e) {
+      imageStatusMsg = `Upload failed: ${e}`;
+    }
+  }
 </script>
 
 <div class="app">
@@ -480,17 +670,27 @@
         </div>
       </section>
 
-      <!-- Panel Orientation -->
+      <!-- Panel Preview -->
       <section class="panel preview-panel">
-        <h2 class="panel-header">PANEL ORIENTATION</h2>
+        <h2 class="panel-header">PANEL PREVIEW</h2>
         <div class="grid-preview-container">
           <div class="grid-preview">
             {#each Array(4) as _, i}
-              {@const row = Math.floor(i / 2)}
+              {@const displayRow = Math.floor(i / 2)}
               {@const col = i % 2}
+              {@const row = 1 - displayRow}
               {#if connected && row === 0 && col === 0}
                 <div class="grid-tile occupied">
-                  <span class="tile-pos">({col}, {row})</span>
+                  {#if previewPixels.length > 0}
+                    <canvas
+                      bind:this={previewCanvasEl}
+                      width="128"
+                      height="128"
+                      class="preview-canvas"
+                    ></canvas>
+                  {:else}
+                    <span class="tile-pos">({col}, {row})</span>
+                  {/if}
                 </div>
               {:else}
                 <div class="grid-tile empty">
@@ -664,7 +864,68 @@
 
       {#if activeConfig.imageSelect}
         <section class="panel">
-          <h2 class="panel-header">IMAGE SELECT</h2>
+          <div class="image-select-grid">
+            <!-- Left column: controls -->
+            <div class="image-select-controls">
+              <h2 class="panel-header">{isGifMode ? 'GIF SELECT' : 'IMAGE SELECT'}</h2>
+              <div class="image-file-row">
+                <button
+                  class="pill-btn pill-accent image-choose-btn"
+                  onclick={chooseImageFile}
+                  disabled={!connected || imageProcessing}
+                >
+                  Choose File
+                </button>
+                <span class="image-file-path">
+                  {imageFilePath ? imageFilePath.split(/[\\/]/).pop() : "No file chosen"}
+                </span>
+              </div>
+              {#if isGifMode}
+                <div class="gif-controls">
+                  {#if gifPlaying}
+                    <button
+                      class="pill-btn pill-warning image-upload-btn"
+                      onclick={stopGif}
+                    >
+                      Pause
+                    </button>
+                  {:else}
+                    <button
+                      class="pill-btn pill-accent image-upload-btn"
+                      onclick={startGif}
+                      disabled={!connected || gifFrames.length === 0}
+                    >
+                      Play
+                    </button>
+                  {/if}
+                </div>
+              {:else}
+                <button
+                  class="pill-btn pill-accent image-upload-btn"
+                  onclick={uploadImage}
+                  disabled={!connected || imagePixels.length === 0 || imageProcessing}
+                >
+                  Upload
+                </button>
+              {/if}
+              {#if imageStatusMsg}
+                <div class="status-msg">{imageStatusMsg}</div>
+              {/if}
+            </div>
+            <!-- Right column: preview -->
+            <div class="image-preview-col">
+              <span class="image-preview-label">Preview</span>
+              <div class="image-preview-box">
+                {#if imagePreviewSrc}
+                  <img
+                    src={imagePreviewSrc}
+                    alt="Image preview"
+                    class="image-preview-img"
+                  />
+                {/if}
+              </div>
+            </div>
+          </div>
         </section>
       {/if}
     </div>
@@ -792,6 +1053,14 @@
   .grid-tile.occupied {
     background: var(--color-elevated);
     border-color: var(--color-accent);
+    overflow: hidden;
+  }
+
+  .preview-canvas {
+    width: 128px;
+    height: 128px;
+    image-rendering: pixelated;
+    border-radius: 5px;
   }
 
   .grid-tile.empty {
@@ -1260,5 +1529,88 @@
     font-size: 12px;
     color: var(--color-warning);
     flex: 1;
+  }
+
+  /* Image Select panel */
+  .image-select-grid {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 11px;
+    align-items: start;
+  }
+
+  .image-select-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .image-select-controls .panel-header {
+    margin-bottom: 0;
+  }
+
+  .image-file-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .image-choose-btn {
+    height: 24px;
+    padding: 0 14px;
+    flex-shrink: 0;
+  }
+
+  .image-file-path {
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+    color: var(--color-text);
+    background: var(--color-elevated-hover);
+    border: 1px solid var(--color-border);
+    border-radius: 5px;
+    padding: 4px 8px;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .image-upload-btn {
+    height: 24px;
+    padding: 0 24px;
+    width: fit-content;
+  }
+
+  .image-preview-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .image-preview-label {
+    font-family: Arial, sans-serif;
+    font-weight: 700;
+    font-size: 24px;
+    color: white;
+  }
+
+  .image-preview-box {
+    width: 128px;
+    height: 128px;
+    background: var(--color-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .image-preview-img {
+    width: 128px;
+    height: 128px;
+    image-rendering: pixelated;
+    border-radius: 10px;
   }
 </style>
