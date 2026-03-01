@@ -24,6 +24,12 @@
     color_r: number;
     color_g: number;
     color_b: number;
+    color2_r: number;
+    color2_g: number;
+    color2_b: number;
+    color3_r: number;
+    color3_g: number;
+    color3_b: number;
     speed: number;
     direction: number;
     grid_width: number;
@@ -39,9 +45,13 @@
     brightness = status.brightness;
     speed = status.speed;
     direction = Math.round(status.direction);
-    colorR = status.color_r;
-    colorG = status.color_g;
-    colorB = status.color_b;
+    colorSetColors = [
+      [status.color_r, status.color_g, status.color_b],
+      [status.color2_r, status.color2_g, status.color2_b],
+      [status.color3_r, status.color3_g, status.color3_b],
+    ];
+    const sel = colorSetColors[selectedColorIndex];
+    colorR = sel[0]; colorG = sel[1]; colorB = sel[2];
     gridWidth = status.grid_width;
     gridHeight = status.grid_height;
     syncPickerFromRgb();
@@ -89,6 +99,14 @@
   let colorG = $state(0);
   let colorB = $state(255);
   let currentPalette = $state("rainbow");
+
+  // Color set state (3 colors, selectable by index)
+  let colorSetColors = $state<[number, number, number][]>([
+    [0, 0, 255],
+    [255, 0, 0],
+    [0, 255, 0],
+  ]);
+  let selectedColorIndex = $state(0);
 
   // HSV color picker state
   let pickerHue = $state(240);        // 0-360
@@ -224,7 +242,7 @@
   const effectCategories = [
     { label: "Audio Reactive", effects: ["bass", "splash", "spectrum"] },
     { label: "Single Color",   effects: ["solid", "twinkle", "breathe", "wipe"] },
-    { label: "Multi Color",    effects: ["rainbow", "fire"] },
+    { label: "Multi Color",    effects: ["rainbow", "fire", "tunnel"] },
     { label: "Image",          effects: ["image", "gif"] },
   ];
 
@@ -276,6 +294,7 @@
     spectrum:  { palette: true,  color: false, colorSet: false, imageSelect: false, params: ['brightness', 'speed', 'audioStream'] },
     image:     { palette: false, color: false, colorSet: false, imageSelect: true,  params: ['brightness'] },
     gif:       { palette: false, color: false, colorSet: false, imageSelect: true,  params: ['brightness'] },
+    tunnel:    { palette: false, color: false, colorSet: true,  imageSelect: false, params: ['brightness', 'speed'] },
   };
 
   let activeConfig = $derived(effectConfig[currentEffect] ?? effectConfig.rainbow);
@@ -360,9 +379,23 @@
     await sendCmd(`direction ${direction}`);
   }
 
+  function selectColorSwatch(index: number) {
+    selectedColorIndex = index;
+    const [r, g, b] = colorSetColors[index];
+    colorR = r; colorG = g; colorB = b;
+    syncPickerFromRgb();
+  }
+
   async function setColor() {
     commandPending = true;
-    await sendCmd(`color ${colorR} ${colorG} ${colorB}`);
+    if (activeConfig.colorSet) {
+      colorSetColors[selectedColorIndex] = [colorR, colorG, colorB];
+      colorSetColors = colorSetColors;
+      await sendCmd(`color ${selectedColorIndex} ${colorR} ${colorG} ${colorB}`);
+    } else {
+      colorSetColors[0] = [colorR, colorG, colorB];
+      await sendCmd(`color ${colorR} ${colorG} ${colorB}`);
+    }
   }
 
   async function setPalette(name: string) {
@@ -759,6 +792,57 @@
       {#if activeConfig.colorSet}
         <section class="panel">
           <h2 class="panel-header">COLOR SET</h2>
+          <div class="color-picker">
+            <div class="color-picker-row">
+              <div class="color-set-swatches">
+                {#each colorSetColors as [r, g, b], i}
+                  <button
+                    class="color-set-swatch"
+                    class:selected={selectedColorIndex === i}
+                    style="background: rgb({r},{g},{b})"
+                    onclick={() => selectColorSwatch(i)}
+                    disabled={!connected || commandPending}
+                    aria-label="Color {i + 1}"
+                  >
+                    {i + 1}
+                  </button>
+                {/each}
+              </div>
+              <div
+                class="sv-plane"
+                bind:this={svPlaneEl}
+                style="background-color: hsl({pickerHue}, 100%, 50%)"
+                onpointerdown={onSvPointerDown}
+                onpointermove={onSvPointerMove}
+                onpointerup={onSvPointerUp}
+                role="slider"
+                tabindex="0"
+                aria-label="Saturation and brightness"
+              >
+                <div class="sv-white"></div>
+                <div class="sv-black"></div>
+                <div
+                  class="sv-cursor"
+                  style="left: {pickerSaturation}%; top: {100 - pickerValue}%"
+                ></div>
+              </div>
+            </div>
+            <input
+              type="range"
+              class="hue-slider"
+              min="0"
+              max="360"
+              bind:value={pickerHue}
+              oninput={onHueInput}
+              onchange={onHueChange}
+              disabled={!connected || commandPending}
+            />
+            <div class="color-readout">
+              <span class="param-label">R: {colorR}</span>
+              <span class="param-label">G: {colorG}</span>
+              <span class="param-label">B: {colorB}</span>
+            </div>
+          </div>
         </section>
       {/if}
 
@@ -1314,6 +1398,38 @@
     flex-shrink: 0;
     border-radius: 6px;
     border: 2px solid var(--color-border);
+  }
+
+  .color-set-swatches {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .color-set-swatch {
+    width: 48px;
+    height: 48px;
+    border-radius: 6px;
+    border: 2px solid var(--color-border);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 700;
+    color: white;
+    text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .color-set-swatch.selected {
+    border-color: white;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.4);
+  }
+
+  .color-set-swatch:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .sv-plane {

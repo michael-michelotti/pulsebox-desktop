@@ -18,7 +18,7 @@ const MSG_CMD_RESP: u8 = 0x82;
 const MSG_PREVIEW_FRAME: u8 = 0x83;
 
 const PROTOCOL_VERSION: u8 = 1;
-const STATUS_FIXED_SIZE: usize = 18;
+const STATUS_FIXED_SIZE: usize = 24;
 
 /* --- Types --- */
 
@@ -50,6 +50,12 @@ pub struct DeviceStatus {
     pub color_r: u8,
     pub color_g: u8,
     pub color_b: u8,
+    pub color2_r: u8,
+    pub color2_g: u8,
+    pub color2_b: u8,
+    pub color3_r: u8,
+    pub color3_g: u8,
+    pub color3_b: u8,
     pub speed: f32,
     pub direction: f32,
     pub grid_width: u8,
@@ -148,17 +154,17 @@ fn parse_status(payload: &[u8]) -> Result<DeviceStatus, String> {
     }
 
     let speed = f32::from_le_bytes(
-        payload[6..10]
+        payload[12..16]
             .try_into()
             .map_err(|_| "Bad speed bytes")?,
     );
     let direction = f32::from_le_bytes(
-        payload[10..14]
+        payload[16..20]
             .try_into()
             .map_err(|_| "Bad direction bytes")?,
     );
     let num_pixels = u16::from_le_bytes(
-        payload[16..18]
+        payload[22..24]
             .try_into()
             .map_err(|_| "Bad num_pixels bytes")?,
     );
@@ -199,10 +205,16 @@ fn parse_status(payload: &[u8]) -> Result<DeviceStatus, String> {
         color_r: payload[3],
         color_g: payload[4],
         color_b: payload[5],
+        color2_r: payload[6],
+        color2_g: payload[7],
+        color2_b: payload[8],
+        color3_r: payload[9],
+        color3_g: payload[10],
+        color3_b: payload[11],
         speed,
         direction,
-        grid_width: payload[14],
-        grid_height: payload[15],
+        grid_width: payload[20],
+        grid_height: payload[21],
         num_pixels,
         effect,
         palette,
