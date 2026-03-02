@@ -241,8 +241,8 @@
 
   const effectCategories = [
     { label: "Audio Reactive", effects: ["bass", "splash", "spectrum"] },
-    { label: "Single Color",   effects: ["solid", "twinkle", "breathe", "wipe"] },
-    { label: "Multi Color",    effects: ["rainbow", "fire", "tunnel"] },
+    { label: "Single Color",   effects: ["solid", "twinkle", "breathe", "wipe", "matrix", "heartbeat"] },
+    { label: "Multi Color",    effects: ["rainbow", "fire", "tunnel", "tetris", "plasma", "sparkle", "glow"] },
     { label: "Image",          effects: ["image", "gif"] },
   ];
 
@@ -264,6 +264,30 @@
       [150,   0,   0], [220,  20,   0], [255,  60,   0], [255, 120,   0],
       [255, 180,   0], [255, 220,   0], [255, 255,  20], [255, 255, 100],
       [255, 255, 180], [255, 255, 220], [255, 255, 255], [255, 255, 255],
+    ],
+    neon: [
+      [255,   0, 150], [255,   0,  50], [255,   0,   0], [255,  80,   0],
+      [255, 220,   0], [255, 100,   0], [255,   0,   0], [255,   0, 100],
+      [255,   0, 255], [150,   0, 255], [ 50,   0, 255], [  0,  60, 255],
+      [  0, 180, 255], [  0,  60, 255], [100,   0, 255], [255,   0, 255],
+    ],
+    ocean: [
+      [  0,   0,  40], [  0,   0,  80], [  0,  20, 140], [  0,  60, 200],
+      [  0, 100, 255], [  0, 160, 220], [  0, 200, 180], [  0, 220, 140],
+      [ 80, 240, 180], [180, 255, 220], [ 80, 240, 180], [  0, 180, 160],
+      [  0, 120, 200], [  0,  60, 180], [  0,  20, 100], [  0,   0,  60],
+    ],
+    sunset: [
+      [ 40,   0,  80], [ 80,   0, 120], [140,   0, 140], [200,   0, 100],
+      [240,  20,  60], [255,  50,  20], [255, 100,   0], [255, 150,   0],
+      [255, 200,  20], [255, 230,  80], [255, 200,  20], [255, 140,   0],
+      [255,  60,  10], [200,  10,  60], [120,   0, 120], [ 60,   0, 100],
+    ],
+    forest: [
+      [ 10,  40,   0], [ 20,  80,   0], [  0, 140,  20], [  0, 200,  40],
+      [ 20, 255,  40], [ 80, 220,  20], [140, 200,   0], [100, 160,  10],
+      [ 60, 100,  10], [ 80,  50,  10], [ 60,  30,   5], [ 40,  60,   5],
+      [ 20, 100,  10], [  0, 160,  30], [ 10, 100,  10], [ 10,  60,   0],
     ],
   };
 
@@ -295,6 +319,12 @@
     image:     { palette: false, color: false, colorSet: false, imageSelect: true,  params: ['brightness'] },
     gif:       { palette: false, color: false, colorSet: false, imageSelect: true,  params: ['brightness'] },
     tunnel:    { palette: false, color: false, colorSet: true,  imageSelect: false, params: ['brightness', 'speed'] },
+    tetris:    { palette: false, color: false, colorSet: true,  imageSelect: false, params: ['brightness', 'speed'] },
+    plasma:    { palette: true,  color: false, colorSet: false, imageSelect: false, params: ['brightness', 'speed'] },
+    sparkle:   { palette: true,  color: false, colorSet: false, imageSelect: false, params: ['brightness', 'speed'] },
+    glow:      { palette: true,  color: false, colorSet: false, imageSelect: false, params: ['brightness', 'speed'] },
+    matrix:    { palette: false, color: true,  colorSet: false, imageSelect: false, params: ['brightness', 'speed'] },
+    heartbeat: { palette: false, color: true,  colorSet: false, imageSelect: false, params: ['brightness', 'speed'] },
   };
 
   let activeConfig = $derived(effectConfig[currentEffect] ?? effectConfig.rainbow);

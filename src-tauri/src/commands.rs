@@ -433,20 +433,56 @@ pub fn process_image(
     let y_offset = (h - side) / 2;
     let cropped = img.crop_imm(x_offset, y_offset, side, side);
 
-    // Resize to grid dimensions (high-quality downscale)
+    // Bin-average downscale: divide image into grid-sized bins, average each bin's RGB
     let gw = grid_width as u32;
     let gh = grid_height as u32;
-    let resized = cropped.resize_exact(gw, gh, FilterType::Lanczos3);
+    let cropped_rgb = cropped.to_rgb8();
+    let (cw, ch) = (side, side);
+    let mut pixels: Vec<u8> = vec![0; (gw * gh * 3) as usize];
 
-    // Flip vertically: image row 0 is top, but LED grid row 0 is bottom
-    let flipped = resized.flipv();
+    for gy in 0..gh {
+        for gx in 0..gw {
+            let x0 = gx * cw / gw;
+            let x1 = ((gx + 1) * cw / gw).min(cw);
+            // Flip vertically: image row 0 is top, LED grid row 0 is bottom
+            let src_y0 = (gh - 1 - gy) * ch / gh;
+            let src_y1 = ((gh - gy) * ch / gh).min(ch);
 
-    // Extract raw RGB pixels for send_pixel_frame
-    let rgb_image = flipped.to_rgb8();
-    let pixels: Vec<u8> = rgb_image.as_raw().clone();
+            let mut r_sum: u64 = 0;
+            let mut g_sum: u64 = 0;
+            let mut b_sum: u64 = 0;
+            let mut count: u64 = 0;
 
-    // Generate preview from the non-flipped image (screen coordinates match visual)
-    let preview = resized.resize_exact(128, 128, FilterType::Nearest);
+            for sy in src_y0..src_y1 {
+                for sx in x0..x1 {
+                    let p = cropped_rgb.get_pixel(sx, sy);
+                    r_sum += p[0] as u64;
+                    g_sum += p[1] as u64;
+                    b_sum += p[2] as u64;
+                    count += 1;
+                }
+            }
+
+            if count > 0 {
+                let idx = ((gy * gw + gx) * 3) as usize;
+                pixels[idx + 0] = (r_sum / count) as u8;
+                pixels[idx + 1] = (g_sum / count) as u8;
+                pixels[idx + 2] = (b_sum / count) as u8;
+            }
+        }
+    }
+
+    // Generate preview from bin-averaged pixels (flip back to screen coordinates)
+    let mut preview_img = image::RgbImage::new(gw, gh);
+    for gy in 0..gh {
+        for gx in 0..gw {
+            let src_y = gh - 1 - gy; // un-flip for screen coordinates
+            let idx = ((src_y * gw + gx) * 3) as usize;
+            preview_img.put_pixel(gx, gy, image::Rgb([pixels[idx], pixels[idx + 1], pixels[idx + 2]]));
+        }
+    }
+    let preview = image::DynamicImage::ImageRgb8(preview_img)
+        .resize_exact(128, 128, FilterType::Nearest);
     let mut png_buf: Vec<u8> = Vec::new();
     preview
         .write_to(
