@@ -18,7 +18,7 @@ const MSG_CMD_RESP: u8 = 0x82;
 const MSG_PREVIEW_FRAME: u8 = 0x83;
 
 const PROTOCOL_VERSION: u8 = 1;
-const STATUS_FIXED_SIZE: usize = 24;
+const STATUS_FIXED_SIZE: usize = 25;
 
 /* --- Types --- */
 
@@ -61,6 +61,7 @@ pub struct DeviceStatus {
     pub grid_width: u8,
     pub grid_height: u8,
     pub num_pixels: u16,
+    pub sensitivity: u8,
     pub effect: String,
     pub palette: String,
 }
@@ -216,6 +217,7 @@ fn parse_status(payload: &[u8]) -> Result<DeviceStatus, String> {
         grid_width: payload[20],
         grid_height: payload[21],
         num_pixels,
+        sensitivity: payload[24],
         effect,
         palette,
     })

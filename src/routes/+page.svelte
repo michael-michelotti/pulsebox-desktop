@@ -35,6 +35,7 @@
     grid_width: number;
     grid_height: number;
     num_pixels: number;
+    sensitivity: number;
     effect: string;
     palette: string;
   }
@@ -43,6 +44,7 @@
     currentEffect = status.effect;
     currentPalette = status.palette;
     brightness = status.brightness;
+    sensitivity = status.sensitivity;
     speed = status.speed;
     direction = Math.round(status.direction);
     colorSetColors = [
@@ -93,6 +95,7 @@
   let commandedPalette = $state<string | null>(null);
   let currentEffect = $state("rainbow");
   let brightness = $state(10);
+  let sensitivity = $state(50);
   let speed = $state(0.0);
   let direction = $state(0);
   let colorR = $state(0);
@@ -305,17 +308,17 @@
     color: boolean;
     colorSet: boolean;
     imageSelect: boolean;
-    params: ('speed' | 'direction' | 'brightness' | 'audioStream')[];
+    params: ('speed' | 'direction' | 'brightness' | 'sensitivity' | 'audioStream')[];
   }> = {
     rainbow:   { palette: true,  color: false, colorSet: false, imageSelect: false, params: ['brightness', 'speed', 'direction'] },
-    bass:      { palette: false, color: true,  colorSet: false, imageSelect: false, params: ['brightness', 'speed', 'audioStream'] },
-    splash:    { palette: false, color: true,  colorSet: false, imageSelect: false, params: ['brightness', 'speed', 'audioStream'] },
+    bass:      { palette: false, color: true,  colorSet: false, imageSelect: false, params: ['brightness', 'speed', 'sensitivity', 'audioStream'] },
+    splash:    { palette: false, color: true,  colorSet: false, imageSelect: false, params: ['brightness', 'speed', 'sensitivity', 'audioStream'] },
     twinkle:   { palette: false, color: true,  colorSet: false, imageSelect: false, params: ['brightness', 'speed'] },
     solid:     { palette: false, color: true,  colorSet: false, imageSelect: false, params: ['brightness'] },
     fire:      { palette: true,  color: false, colorSet: false, imageSelect: false, params: ['brightness'] },
     breathe:   { palette: false, color: true,  colorSet: false, imageSelect: false, params: ['brightness', 'speed'] },
     wipe:      { palette: false, color: true,  colorSet: false, imageSelect: false, params: ['brightness', 'speed'] },
-    spectrum:  { palette: true,  color: false, colorSet: false, imageSelect: false, params: ['brightness', 'speed', 'audioStream'] },
+    spectrum:  { palette: true,  color: false, colorSet: false, imageSelect: false, params: ['brightness', 'speed', 'sensitivity', 'audioStream'] },
     image:     { palette: false, color: false, colorSet: false, imageSelect: true,  params: ['brightness'] },
     gif:       { palette: false, color: false, colorSet: false, imageSelect: true,  params: ['brightness'] },
     tunnel:    { palette: false, color: false, colorSet: true,  imageSelect: false, params: ['brightness', 'speed'] },
@@ -397,6 +400,11 @@
   async function setBrightness() {
     commandPending = true;
     await sendCmd(`brightness ${brightness}`);
+  }
+
+  async function setSensitivity() {
+    commandPending = true;
+    await sendCmd(`sensitivity ${sensitivity}`);
   }
 
   async function setSpeed() {
@@ -657,6 +665,7 @@
   <!-- Banner -->
   <header class="banner">
     <h1>Pulse Box</h1>
+    <img src="/pulsebox_logo.svg" alt="PulseBox Logo" class="banner-logo" />
   </header>
 
   <!-- 3-Column Grid -->
@@ -935,6 +944,14 @@
             </div>
           {/if}
 
+          {#if activeConfig.params.includes('sensitivity')}
+            <span class="param-label">Sensitivity (0-100)</span>
+            <div class="param-control">
+              <input type="range" class="param-slider" min="0" max="100" bind:value={sensitivity} onchange={setSensitivity} disabled={!connected || commandPending} />
+              <input type="number" class="param-input" min="0" max="100" bind:value={sensitivity} onchange={setSensitivity} disabled={!connected || commandPending} />
+            </div>
+          {/if}
+
           {#if activeConfig.params.includes('speed')}
             <span class="param-label">Speed (0.00-1.00)</span>
             <div class="param-control">
@@ -1091,6 +1108,9 @@
   .banner {
     padding: 16px 24px;
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 16px;
   }
 
   .banner h1 {
@@ -1098,6 +1118,11 @@
     font-size: 48px;
     margin: 0;
     color: var(--color-text);
+  }
+
+  .banner-logo {
+    width: 64px;
+    height: 64px;
   }
 
   /* Grid layout */
