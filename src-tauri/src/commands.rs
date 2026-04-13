@@ -43,6 +43,12 @@ pub struct ConnectionStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PanelPosition {
+    pub grid_x: u8,
+    pub grid_y: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceStatus {
     pub protocol_ver: u8,
     pub wifi_mode: String,
@@ -64,6 +70,7 @@ pub struct DeviceStatus {
     pub sensitivity: u8,
     pub effect: String,
     pub palette: String,
+    pub panels: Vec<PanelPosition>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -194,6 +201,25 @@ fn parse_status(payload: &[u8]) -> Result<DeviceStatus, String> {
         return Err("Palette name truncated".into());
     }
     let palette = String::from_utf8_lossy(&payload[offset..offset + pname_len]).to_string();
+    offset += pname_len;
+
+    // Panel topology (optional — backward compatible with older firmware)
+    let mut panels = vec![PanelPosition { grid_x: 0, grid_y: 0 }]; // controller always at (0,0)
+    if offset < payload.len() {
+        let num_panels = payload[offset] as usize;
+        offset += 1;
+        panels.clear();
+        for _ in 0..num_panels {
+            if offset + 2 > payload.len() {
+                break;
+            }
+            panels.push(PanelPosition {
+                grid_x: payload[offset],
+                grid_y: payload[offset + 1],
+            });
+            offset += 2;
+        }
+    }
 
     Ok(DeviceStatus {
         protocol_ver: payload[0],
@@ -220,6 +246,7 @@ fn parse_status(payload: &[u8]) -> Result<DeviceStatus, String> {
         sensitivity: payload[24],
         effect,
         palette,
+        panels,
     })
 }
 

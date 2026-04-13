@@ -17,6 +17,11 @@
     port: number | null;
   }
 
+  interface PanelPosition {
+    grid_x: number;
+    grid_y: number;
+  }
+
   interface DeviceStatus {
     protocol_ver: number;
     wifi_mode: string;
@@ -38,6 +43,7 @@
     sensitivity: number;
     effect: string;
     palette: string;
+    panels: PanelPosition[];
   }
 
   function applyStatus(status: DeviceStatus) {
@@ -56,6 +62,9 @@
     colorR = sel[0]; colorG = sel[1]; colorB = sel[2];
     gridWidth = status.grid_width;
     gridHeight = status.grid_height;
+    panels = status.panels && status.panels.length > 0
+      ? status.panels
+      : [{ grid_x: 0, grid_y: 0 }];
     syncPickerFromRgb();
     commandedEffect = null;
     commandedPalette = null;
@@ -71,6 +80,9 @@
       connectedDevice = null;
       connectedIp = "";
       previewPixels = [];
+      panels = [{ grid_x: 0, grid_y: 0 }];
+      gridWidth = 8;
+      gridHeight = 8;
       statusMsg = "Device disconnected";
       stopGif();
     });
@@ -212,9 +224,10 @@
   let audioStreaming = $state(false);
   let audioStatusMsg = $state("");
 
-  // Grid dimensions (from DeviceStatus)
+  // Grid dimensions and panel topology (from DeviceStatus)
   let gridWidth = $state(8);
   let gridHeight = $state(8);
+  let panels = $state<PanelPosition[]>([{ grid_x: 0, grid_y: 0 }]);
 
   // Live preview state
   let previewPixels = $state<number[]>([]);
@@ -373,6 +386,9 @@
     connectedIp = "";
     connectedDevice = null;
     previewPixels = [];
+    panels = [{ grid_x: 0, grid_y: 0 }];
+    gridWidth = 8;
+    gridHeight = 8;
     statusMsg = "Disconnected";
   }
 
@@ -627,6 +643,14 @@
     const h = gridHeight;
     if (pixels.length !== w * h * 3) return;
 
+    // Compute display size: fit within max 264px wide, maintain aspect ratio, integer scale
+    const maxDisplayW = 264;
+    const scale = Math.max(1, Math.floor(maxDisplayW / w));
+    const displayW = w * scale;
+    const displayH = h * scale;
+    previewCanvasEl.width = displayW;
+    previewCanvasEl.height = displayH;
+
     // Create ImageData from RGB (expand to RGBA), flipping Y so y=0 is at the bottom
     const imgData = new ImageData(w, h);
     for (let y = 0; y < h; y++) {
@@ -646,8 +670,19 @@
     offCtx.putImageData(imgData, 0, 0);
 
     ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, 128, 128);
-    ctx.drawImage(offscreen, 0, 0, 128, 128);
+    ctx.clearRect(0, 0, displayW, displayH);
+    ctx.drawImage(offscreen, 0, 0, displayW, displayH);
+
+    // Draw panel boundaries
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+    ctx.lineWidth = 1;
+    for (const panel of panels) {
+      const px = panel.grid_x * 8 * scale;
+      const py = (h - (panel.grid_y + 1) * 8) * scale; // flip Y for screen coords
+      const pw = 8 * scale;
+      const ph = 8 * scale;
+      ctx.strokeRect(px + 0.5, py + 0.5, pw - 1, ph - 1);
+    }
   }
 
   async function uploadImage() {
@@ -746,35 +781,21 @@
       <section class="panel preview-panel">
         <h2 class="panel-header">PANEL PREVIEW</h2>
         <div class="grid-preview-container">
-          <div class="grid-preview">
-            {#each Array(4) as _, i}
-              {@const displayRow = Math.floor(i / 2)}
-              {@const col = i % 2}
-              {@const row = 1 - displayRow}
-              {#if connected && row === 0 && col === 0}
-                <div class="grid-tile occupied">
-                  {#if previewPixels.length > 0}
-                    <canvas
-                      bind:this={previewCanvasEl}
-                      width="128"
-                      height="128"
-                      class="preview-canvas"
-                    ></canvas>
-                  {:else}
-                    <span class="tile-pos">({col}, {row})</span>
-                  {/if}
-                </div>
-              {:else}
-                <div class="grid-tile empty">
-                  <span class="tile-pos dim">({col}, {row})</span>
-                </div>
-              {/if}
-            {/each}
-          </div>
-          <div class="grid-legend">
-            <span class="legend-item"><span class="legend-dot occupied"></span> Connected</span>
-            <span class="legend-item"><span class="legend-dot empty"></span> Empty</span>
-          </div>
+          {#if connected}
+            <div class="preview-canvas-wrapper">
+              <canvas
+                bind:this={previewCanvasEl}
+                class="preview-canvas"
+              ></canvas>
+            </div>
+            <div class="grid-info">
+              {panels.length} panel{panels.length !== 1 ? "s" : ""} &middot; {gridWidth}&times;{gridHeight} px
+            </div>
+          {:else}
+            <div class="preview-disconnected">
+              <span class="tile-pos dim">No device connected</span>
+            </div>
+          {/if}
         </div>
       </section>
     </div>
@@ -1169,82 +1190,45 @@
   .grid-preview-container {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
   }
 
-  .grid-preview {
-    display: grid;
-    grid-template-columns: 128px 128px;
-    grid-template-rows: 128px 128px;
-    gap: 6px;
-  }
-
-  .grid-tile {
-    width: 128px;
-    height: 128px;
+  .preview-canvas-wrapper {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 8px;
+    background: var(--color-bg);
     border-radius: 6px;
     border: 1px solid var(--color-border);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .grid-tile.occupied {
-    background: var(--color-elevated);
-    border-color: var(--color-accent);
-    overflow: hidden;
   }
 
   .preview-canvas {
-    width: 128px;
-    height: 128px;
     image-rendering: pixelated;
-    border-radius: 5px;
+    border-radius: 4px;
   }
 
-  .grid-tile.empty {
-    background: var(--color-bg);
-    border-style: dashed;
-  }
-
-  .tile-pos {
+  .grid-info {
     font-family: Arial, sans-serif;
-    font-size: 14px;
+    font-size: 12px;
     color: var(--color-text-secondary);
+    text-align: center;
+  }
+
+  .preview-disconnected {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 80px;
+    background: var(--color-bg);
+    border-radius: 6px;
+    border: 1px dashed var(--color-border);
   }
 
   .tile-pos.dim {
-    color: var(--color-text-dim);
-  }
-
-  .grid-legend {
-    display: flex;
-    gap: 16px;
-    justify-content: center;
-  }
-
-  .legend-item {
-    display: flex;
-    align-items: center;
-    gap: 6px;
     font-family: Arial, sans-serif;
-    font-size: 11px;
-    color: var(--color-text-secondary);
-  }
-
-  .legend-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-  }
-
-  .legend-dot.occupied {
-    background: var(--color-accent);
-  }
-
-  .legend-dot.empty {
-    background: var(--color-bg);
-    border: 1px dashed var(--color-border);
+    font-size: 14px;
+    color: var(--color-text-dim);
   }
 
   /* Controllers panel sub-panels */
