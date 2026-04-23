@@ -21,7 +21,8 @@ A cross-platform control surface for the ESP32-S3-based Pulse Box controller. Di
 
 <!-- TODO: Replace with annotated screenshot of the app showing all sections -->
 
-![PulseBox Desktop UI](docs/images/app_screenshot.png)
+![PulseBox Desktop UI](https://github.com/user-attachments/assets/d16c41aa-1ab7-4f79-9314-c78ea1e67a18)
+
 _The desktop app connected to a controller, showing device discovery, effect controls, and live LED preview._
 
 ---
